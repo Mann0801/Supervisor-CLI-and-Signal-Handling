@@ -267,4 +267,4 @@ module_init(monitor_init);
 module_exit(monitor_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Supervised multi-container memory monitor");
+MODULE_DESCRIPTION("Supervised multi-container memory monitor"); 
