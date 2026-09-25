@@ -35,3 +35,7 @@ logs/
 *.swp
 *~
 .vscode/
+
+# Compiled binaries
+/cli
+/supervisor

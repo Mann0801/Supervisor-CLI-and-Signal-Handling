@@ -1,74 +1,88 @@
-Multi-Container Runtime
-A lightweight Linux container runtime in C with a long-running supervisor and a kernel-space memory monitor.
+# Supervisor CLI and Signal Handling
 
-Read project-guide.md for the full project specification.
+A small Linux process supervisor written in C. It runs in the background and starts, stops, and tracks "containers". A separate command-line tool controls it by sending commands through a named pipe.
 
-Getting Started
-1. Fork the Repository
-Go to github.com/shivangjhalani/OS-Jackfruit
-Click Fork (top-right)
-Clone your fork:
-git clone https://github.com/<your-username>/OS-Jackfruit.git
-cd OS-Jackfruit
-2. Set Up Your VM
-You need an Ubuntu 22.04 or 24.04 VM with Secure Boot OFF. WSL will not work.
+I built it for my Operating Systems course at PES University. It's a simplified version of how a container runtime manages its processes: each container here is just a child process, not a fully isolated container.
 
-Install dependencies:
+## What it does
 
-sudo apt update
-sudo apt install -y build-essential linux-headers-$(uname -r)
-3. Run the Environment Check
-cd boilerplate
-chmod +x environment-check.sh
-sudo ./environment-check.sh
-Fix any issues reported before moving on.
+```
+./cli start web       →  supervisor forks a new child process called "web"
+./cli list            →  supervisor prints every running container and its PID
+./cli stop web        →  supervisor sends SIGTERM to "web"
+```
 
-4. Prepare the Root Filesystem
-mkdir rootfs-base
-wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz
-tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C rootfs-base
+## How it works
 
-# Make one writable copy per container you plan to run
-cp -a ./rootfs-base ./rootfs-alpha
-cp -a ./rootfs-base ./rootfs-beta
-Do not commit rootfs-base/ or rootfs-* directories to your repository.
+The project has two programs:
 
-5. Understand the Boilerplate
-The boilerplate/ folder contains starter files:
+- **`supervisor`** runs continuously. On startup it creates a named pipe (FIFO) at `/tmp/os_fifo` and waits for commands on it.
+  - `START <name>` forks a new child process for the container and records its name and PID.
+  - `STOP <name>` sends that process `SIGTERM`.
+  - `LIST` prints every active container and its PID.
 
-File	Purpose
-engine.c	User-space runtime and supervisor skeleton
-monitor.c	Kernel module skeleton
-monitor_ioctl.h	Shared ioctl command definitions
-Makefile	Build targets for both user-space and kernel module
-cpu_hog.c	CPU-bound test workload
-io_pulse.c	I/O-bound test workload
-memory_hog.c	Memory-consuming test workload
-environment-check.sh	VM environment preflight check
-Use these as your starting point. You are free to restructure the repository however you want — the submission requirements are listed in the project guide.
+  Commands that can't be carried out get an error message instead of a crash: a duplicate name, an unknown name, or an unknown command.
 
-6. Build and Verify
-cd boilerplate
-make
-If this compiles without errors, your environment is ready.
+- **`cli`** is the tool you type commands into. It turns `start`, `stop`, or `list` into a text command, writes it into the pipe, and exits.
 
-7. GitHub Actions Smoke Check
-Your fork will inherit a minimal GitHub Actions workflow from this repository.
+Key OS concepts it uses:
 
-That workflow only performs CI-safe checks:
+- **Named pipes (FIFOs)** let two unrelated processes talk to each other. The supervisor also keeps its own write end of the pipe open. Without that, the pipe would reach end-of-file every time a `cli` call finished.
+- **`fork()`** creates each container as a child process of the supervisor.
+- **Signals.** `STOP` sends `SIGTERM`. The supervisor installs a `SIGCHLD` handler and calls `waitpid(..., WNOHANG)` to reap exited children. That way stopped containers don't linger as zombie processes, and they're removed from the list.
 
-make -C boilerplate ci
-user-space binary compilation (engine, memory_hog, cpu_hog, io_pulse)
-./boilerplate/engine with no arguments must print usage and exit with a non-zero status
-The CI-safe build command is:
+## Build and run
 
-make -C boilerplate ci
-This smoke check does not test kernel-module loading, supervisor runtime behavior, or container execution.
+You need Linux and `gcc`.
 
-What to Do Next
-Read project-guide.md end to end. It contains:
+```bash
+gcc -Wall -o supervisor supervisor.c
+gcc -Wall -o cli cli.c
+```
 
-The six implementation tasks (multi-container runtime, CLI, logging, kernel monitor, scheduling experiments, cleanup)
-The engineering analysis you must write
-The exact submission requirements, including what your README.md must contain (screenshots, analysis, design decisions)
-Your fork's README.md should be replaced with your own project documentation as described in the submission package section of the project guide. (As in get rid of all the above content and replace with your README.md)
+Start the supervisor in one terminal:
+
+```bash
+./supervisor
+```
+
+Send it commands from a second terminal:
+
+```bash
+./cli start web
+./cli start db
+./cli list
+./cli stop web
+./cli list
+```
+
+## Example output
+
+This is what the supervisor prints for the commands above. After them, the run did `start web` twice more and then `stop ghost`:
+
+```
+Supervisor started. Listening on /tmp/os_fifo
+Supervisor: started container 'web' with PID 156574
+Container 'web' started with PID 156574
+Supervisor: started container 'db' with PID 156576
+Container 'db' started with PID 156576
+Active containers:
+Name: web, PID: 156574
+Name: db, PID: 156576
+Supervisor: stop signal sent to 'web' (PID 156574)
+Supervisor: container 'web' with PID 156574 exited
+Active containers:
+Name: db, PID: 156576
+Supervisor: started container 'web' with PID 156585
+Container 'web' started with PID 156585
+Supervisor: container 'web' already exists
+Supervisor: container 'ghost' not found
+```
+
+## Files
+
+| File | What it is |
+|---|---|
+| `supervisor.c` | The supervisor: the pipe listener, fork/stop logic, and child reaping |
+| `cli.c` | The command-line client |
+| `boilerplate/`, `project-guide.md` | Starter code and the assignment spec from the course |
